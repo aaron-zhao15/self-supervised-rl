@@ -332,7 +332,7 @@ class PDQNAgent(Agent):
                 action = self.np_random.choice(self.num_actions)
                 if not self.use_ornstein_noise:
                     all_action_parameters = torch.from_numpy(np.random.uniform(self.action_parameter_min_numpy,
-                                                              self.action_parameter_max_numpy))
+                                                              self.action_parameter_max_numpy, size=all_action_parameters.shape))
             else:
                 #
                 Q_a = self.actor.forward(state.unsqueeze(0), all_action_parameters.unsqueeze(0))

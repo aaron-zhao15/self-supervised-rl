@@ -5,6 +5,258 @@ import numpy as np
 from multiagent.multi_discrete import MultiDiscrete
 import math
 
+import numpy as np
+import gym
+from gym import spaces
+import matplotlib.pyplot as plt
+import cv2
+import pickle
+
+class ContinuousMovableObject:
+    def __init__(self, x, y, grid_size, speed=1, occupancy_radius=1):
+        self.position = np.array([x, y], dtype=float)
+        self.grid_size = grid_size
+        self.occupancy_radius = occupancy_radius
+        self.speed = speed
+
+    def move(self, movement, other_agents=None):
+        new_position = self.position + self.speed * np.array(movement)
+        new_position = np.clip(new_position, 0, self.grid_size - 1)
+        
+        for other_agent in other_agents:
+            distance = np.linalg.norm(new_position - other_agent.position)
+            if distance < self.occupancy_radius + other_agent.occupancy_radius:
+                return  # Collision detected, cancel the move
+
+        self.position = new_position
+
+class PirateEnv(gym.Env):
+    def __init__(self, num_agents=3, grid_size=20, disable_distance=3, occupancy_radius=1):
+        super(PirateEnv, self).__init__()
+
+        self.num_agents = num_agents
+        self.n = num_agents
+        self.num_targets = num_agents
+        self.grid_size = grid_size
+        self.disable_distance = disable_distance
+        self.max_steps = 100
+        self.steps = 0
+        self.occupancy_radius = occupancy_radius
+        self.capture_limit = 10
+
+        self.action_space = [spaces.Tuple((
+            spaces.Discrete(2),  # Action type: 0 (move), 1 (capture)
+            spaces.Box(low=np.array([-1, -1]), high=np.array([1, 1]), dtype=np.float32)
+        )) for _ in range(self.num_agents)]
+
+        self.observation_space = [spaces.Box(
+            low=0,
+            high=self.grid_size,
+            shape=(2 * self.num_agents + 3,),
+            dtype=np.float32
+        ) for _ in range(self.num_agents)]
+
+        self.reset()
+
+    def reset(self):
+        self.agents = [ContinuousMovableObject(
+            np.random.uniform(0, self.grid_size),
+            np.random.uniform(0, self.grid_size),
+            self.grid_size,
+            speed=0.5 * i + 0.5,
+            occupancy_radius=self.occupancy_radius
+        ) for i in range(self.num_agents)]
+
+        self.targets = [ContinuousMovableObject(
+            np.random.uniform(0, self.grid_size),
+            np.random.uniform(0, self.grid_size),
+            self.grid_size
+        ) for _ in range(self.num_targets)]
+
+        self.targets_disabled = [False] * self.num_targets
+        self.agent_capture_count = [0] * self.num_agents
+        self.steps = 0
+
+        return self.observations()
+
+    def step(self, actions):
+        self.steps += 1
+        rewards = np.zeros(self.num_agents)
+        done = np.zeros(self.num_agents)
+        for i, action in enumerate(actions):
+            moving = action[0]
+            capturing = action[3]
+            if moving:  # Move action
+                other_agents = [agent for j, agent in enumerate(self.agents) if j != i]
+                theta = action[1]
+                movement = np.array([np.cos(theta), np.sin(theta)])
+                self.agents[i].move(movement, other_agents)
+            
+            if capturing and self.agent_capture_count[i] < self.capture_limit:
+                target = self.targets[i]
+                distance = np.linalg.norm(self.agents[i].position - target.position)
+                if distance <= self.disable_distance and not self.targets_disabled[i]:
+                    rewards[i] = 10  # Capture reward
+                    self.targets_disabled[i] = True
+                    done[i] = True
+                else:
+                    rewards[i] = 0  # Failed capture penalty
+                self.agent_capture_count[i] += 1
+
+            if self.agent_capture_count[i] >= self.capture_limit:
+                done[i] = True
+
+        for i, target in enumerate(self.targets):
+            if not self.targets_disabled[i]:
+                target.move(np.random.uniform(-1, 1, size=2), self.agents)
+
+        move_rewards = self.dist_rewards()
+        rewards += move_rewards
+
+        if self.steps >= self.max_steps:
+            done = np.ones_like(done)
+        observations = self.observations()
+
+        return observations, rewards, done.tolist(), {}
+
+    def dist_rewards(self):
+        return np.array([-np.linalg.norm(agent.position - target.position) for agent, target in zip(self.agents, self.targets)])
+
+    def observations(self):
+        obs = [[] for _ in self.agents]
+        for agent_id, agent in enumerate(self.agents):
+            obs[agent_id].extend(agent.position)
+            for other_agent_id, other_agent in enumerate(self.agents):
+                if agent_id != other_agent_id:
+                    obs[agent_id].extend(other_agent.position)
+            obs[agent_id].extend(self.targets[agent_id].position)
+            obs[agent_id].extend([self.targets_disabled[agent_id]])
+        return np.array(obs)
+    
+    def render(self, mode='human'):
+        canvas_size = 500
+        scale = canvas_size / self.grid_size
+        canvas = np.ones((canvas_size, canvas_size, 3), dtype=np.uint8) * 255  # White background
+
+        # Draw grid lines
+        for i in range(self.grid_size + 1):
+            # Vertical lines
+            start_point = (int(i * scale), 0)
+            end_point = (int(i * scale), canvas_size)
+            cv2.line(canvas, start_point, end_point, (200, 200, 200), 1)  # Light gray grid lines
+            # Horizontal lines
+            start_point = (0, int(i * scale))
+            end_point = (canvas_size, int(i * scale))
+            cv2.line(canvas, start_point, end_point, (200, 200, 200), 1)  # Light gray grid lines
+
+        # Draw agents with continuous positions
+        for i, agent in enumerate(self.agents):
+            color = (0, 255, 0) if self.agent_launched[i] else (255, 0, 0)
+            # Scale continuous positions for rendering
+            agent_pos = np.clip(agent.position, 0, self.grid_size - 1) * scale
+            center = tuple(agent_pos.astype(int))
+            cv2.circle(canvas, center, int(scale // 3), color, -1)
+
+        # Draw the target with continuous position
+        for j, target in enumerate(self.targets):
+            target_color = (0, 0, 255) if not self.targets_disabled[j] else (128, 128, 128)
+            # Scale continuous positions for rendering
+            target_pos = np.clip(target.position, 0, self.grid_size - 1) * scale
+            target_center = tuple(target_pos.astype(int))
+            cv2.circle(canvas, target_center, int(scale // 3), target_color, -1)
+
+        return canvas
+    
+    def save_state(self):
+        """
+        Returns the current state as a dictionary.
+        """
+        state = {
+            'agents': [(agent.position, agent.speed) for agent in self.agents],
+            'targets': [(target.position, target.speed) for target in self.targets],
+            'targets_disabled': self.targets_disabled,
+            'agent_launched': self.agent_launched,
+            'steps': self.steps
+        }
+        return state
+
+    def load_state(self, state):
+        """
+        Loads the state from a dictionary.
+        """
+        self.agents = [
+            ContinuousMovableObject(pos[0], pos[1], self.grid_size, speed=speed)
+            for pos, speed in state['agents']
+        ]
+        self.targets = [
+            ContinuousMovableObject(pos[0], pos[1], self.grid_size, speed=speed)
+            for pos, speed in state['targets']
+        ]
+        self.targets_disabled = state['targets_disabled']
+        self.agent_launched = state['agent_launched']
+        self.steps = state['steps']
+
+
+    def close(self):
+        cv2.destroyAllWindows()
+
+def run_environment(env, num_steps=20):
+    for _ in range(num_steps):
+        actions = [env.action_space.sample() for _ in range(env.num_agents)]
+        env.step(actions)
+        env.render()
+
+def policy_to_action(policies):
+    env_actions = []
+    for policy in policies:
+        action_type = np.argmax(policy[0:2])
+        movement = np.array(policy[2:4])
+        action = [action_type, movement]
+        env_actions.append(action)
+    return env_actions
+
+from matplotlib.animation import FuncAnimation
+def run_and_visualize(env, agents, num_steps=50, eval_mode="debug", policy_converter=lambda x:x):
+    frames = []
+
+    # Initialize state and pre-allocate frame storage if possible
+    state = env.reset()
+
+    # Step through the environment and collect frames
+    for _ in range(num_steps):
+        # Optimize action computation
+        if eval_mode == "hybrid":
+            actions = []
+            for i, (move_agent, decision_agent) in enumerate(agents):
+                move_action = move_agent.act(state[i])
+                decision_action = decision_agent.act(state[i])
+                
+                action = np.concatenate((decision_action, move_action))
+                actions.append(action)
+            actions = policy_converter(actions)
+        
+        state, rewards, done, _ = env.step(actions)
+
+        # Collect frame only if rendering is enabled
+        frame = env.render()
+        frames.append(frame)
+        if done:
+            break
+
+    # Create a video and visualize it in the Jupyter notebook cell
+    fig, ax = plt.subplots(figsize=(6, 6))
+    plt.axis('off')  # Turn off axis for better visualization
+    ax_img = ax.imshow(cv2.cvtColor(frames[0], cv2.COLOR_BGR2RGB))  # Display the first frame immediately
+
+    def update_frame(i):
+        ax_img.set_data(cv2.cvtColor(frames[i], cv2.COLOR_BGR2RGB))
+        return [ax_img]
+
+    # Use FuncAnimation to create an animation with a lower interval
+    anim = FuncAnimation(fig, update_frame, frames=len(frames), interval=100, repeat=False)
+    plt.close(fig)  # Prevent duplicate static display of the plot
+
+
 
 # environment for all agents in the multiagent world
 # currently code assumes that no agents will be created/destroyed at runtime!

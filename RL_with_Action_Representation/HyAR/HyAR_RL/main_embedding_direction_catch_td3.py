@@ -3,12 +3,14 @@ import torch
 import gym
 import argparse
 import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from  HyAR_RL import utils
 from agents import P_TD3_relable
 from agents import P_DDPG_relable
 import copy
-from agents import OurDDPG
-from agents import DDPG
+# from agents import OurDDPG
+# from agents import DDPG
 # from sklearn.metrics import mean_squared_error
 from common import ClickPythonLiteralOption
 from common.platform_domain import PlatformFlattenedActionWrapper
@@ -97,12 +99,13 @@ def run(args):
     if args.save_model and not os.path.exists("./models"):
         os.makedirs("./models")
 
-    env = make_env(args.env)
+    # env = make_env(args.env)
+    env = make_pirate_env()
     obs_shape_n = [env.observation_space[i].shape for i in range(env.n)]
     obs_n = env.reset()
 
     # Set seeds
-    env.seed(args.seed)
+    # env.seed(args.seed)
     np.random.seed(args.seed)
     print(obs_shape_n)
     torch.manual_seed(args.seed)
@@ -222,11 +225,6 @@ def run(args):
             next_state, reward, done_n, _ = env.step(action)
             done = all(done_n)
             reward = reward[0]
-            if reward > 4:
-                flag = 1
-                done = True
-            if reward == 0:
-                done = True
             next_state = np.array(next_state, dtype=np.float32, copy=False)[0]
 
             next_act, next_act_param, next_all_action_parameters = agent_pre.act(next_state)
@@ -482,8 +480,7 @@ def run(args):
     dir = "result/TD3/direction_catch"
     data = "0704"
     redir = os.path.join(dir, data)
-    if not os.path.exists(redir):
-        os.mkdir(redir)
+    os.makedirs(redir, exist_ok=True)
     print("redir", redir)
 
     # title1 = "Reward_td3_direction_catch_embedding_nopre_relable_"
@@ -565,12 +562,18 @@ def make_env(scenario_name):
     env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation)
     return env
 
+def make_pirate_env():
+    from multiagent.environment import PirateEnv
+
+    env = PirateEnv(num_agents=1)
+    return env
+
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--policy", default="P-TD3")  # Policy name (TD3, DDPG or OurDDPG)
-    parser.add_argument("--env", default='simple_catch')  # platform goal HFO
+    parser.add_argument("--env", default='hard_catch')  # platform goal HFO
     parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     parser.add_argument("--start_timesteps", default=128, type=int)  # Time steps initial random policy is used
     parser.add_argument("--eval_freq", default=2500, type=int)  # How often (time steps) we evaluate
