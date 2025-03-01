@@ -181,7 +181,7 @@ class PDQNAgent(Agent):
         self.device = torch.device(device)
         self.num_actions = action_space
         # self.action_parameter_sizes = [4,0]
-        self.action_parameter_sizes = np.array([1, 0])
+        self.action_parameter_sizes = np.array([2, 0])
         self.action_parameter_size = int(self.action_parameter_sizes.sum())
 
         self.action_max = torch.from_numpy(np.ones((self.num_actions,))).float().to(device)

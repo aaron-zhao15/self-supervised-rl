@@ -153,13 +153,13 @@ def run(args):
     # embedding初始部分
     action_rep = ActionRepresentation_vae.Action_representation(state_dim=state_dim,
                                                                   action_dim=discrete_action_dim,
-                                                                  parameter_action_dim=1,
+                                                                  parameter_action_dim=parameter_action_dim,
                                                                   reduced_action_dim=discrete_emb_dim,
                                                                   reduce_parameter_action_dim=parameter_emb_dim
                                                                   )
     action_rep_target = copy.deepcopy(action_rep)
     replay_buffer = utils.ReplayBuffer(state_dim, discrete_action_dim=1,
-                                       parameter_action_dim=1,
+                                       parameter_action_dim=parameter_action_dim,
                                        all_parameter_action_dim=parameter_action_dim,
                                        discrete_emb_dim=discrete_emb_dim,
                                        parameter_emb_dim=parameter_emb_dim,
