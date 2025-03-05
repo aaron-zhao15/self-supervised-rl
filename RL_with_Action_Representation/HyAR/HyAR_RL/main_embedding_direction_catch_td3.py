@@ -19,15 +19,16 @@ from agents.pdqn_MPE_direction_catch import PDQNAgent
 from embedding import ActionRepresentation_vae
 import torch
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 import math
 
 
 def pad_action(act, act_param):
     if act == 0:
-        action = np.hstack(([1], act_param * math.pi, [1], [0]))
+        action = np.hstack(([1], act_param[0], act_param[1], [0], [1]))
     else:
-        action = np.hstack(([1], act_param * math.pi, [0], [1]))
+        action = np.hstack(([1], act_param[0], act_param[1], [1], [0]))
 
     return [action]
 
@@ -115,9 +116,9 @@ def run(args):
     discrete_action_dim = 2
     # action_parameter_sizes = np.array(
     #     [env.action_space.spaces[i].shape[0] for i in range(1, discrete_action_dim + 1)])
-    parameter_action_dim = 1
+    parameter_action_dim = 2
     discrete_emb_dim = discrete_action_dim * 2
-    parameter_emb_dim = parameter_action_dim * 2 + 2
+    parameter_emb_dim = (parameter_action_dim + 1) * discrete_action_dim
     max_action = 1.0
 
     print("state_dim", state_dim)
@@ -148,7 +149,8 @@ def run(args):
     if args.load_model != "":
         policy_file = file_name if args.load_model == "default" else args.load_model
         policy.load(f"./models/{policy_file}")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
 
     # embedding初始部分
     action_rep = ActionRepresentation_vae.Action_representation(state_dim=state_dim,
@@ -166,7 +168,7 @@ def run(args):
                                        max_size=int(1e5))
 
     replay_buffer_embedding = utils.ReplayBuffer(state_dim, discrete_action_dim=1,
-                                                 parameter_action_dim=1,
+                                                 parameter_action_dim=parameter_action_dim,
                                                  all_parameter_action_dim=parameter_action_dim,
                                                  discrete_emb_dim=discrete_emb_dim,
                                                  parameter_emb_dim=parameter_emb_dim,
@@ -175,7 +177,7 @@ def run(args):
                                                  )
 
     agent_pre = PDQNAgent(
-        obs_shape_n, action_space=2,
+        obs_shape_n, action_space=parameter_action_dim,
         batch_size=128,
         learning_rate_actor=0.001,
         learning_rate_actor_param=0.0001,
@@ -196,7 +198,7 @@ def run(args):
         actor_kwargs={'hidden_layers': [256, 256, 128, 64],
                       'action_input_layer': 0, },
         actor_param_kwargs={'hidden_layers': [256, 256, 128, 64],
-                            'squashing_function': False,
+                            'squashing_function': True,
                             'output_layer_init_std': 0.0001, },
         zero_index_gradients=False,
         seed=args.seed)
@@ -233,7 +235,7 @@ def run(args):
             if act == 0:
                 act_param_ = act_param
             else:
-                act_param_ = np.zeros((1,))
+                act_param_ = np.zeros((parameter_action_dim,))
             replay_buffer_embedding.add(state, act, act_param_, all_action_parameters, discrete_emb=None,
                                         parameter_emb=None,
                                         next_state=next_state,
@@ -351,7 +353,7 @@ def run(args):
         if discrete_action == 0:
             parameter_action = parameter_action
         else:
-            parameter_action = np.zeros((1,))
+            parameter_action = np.zeros((parameter_action_dim,))
         episode_reward = 0.
         flag = 0
         if cur_step >= args.start_timesteps:
@@ -417,7 +419,7 @@ def run(args):
             if next_discrete_action == 0:
                 next_parameter_action = next_parameter_action
             else:
-                next_parameter_action = np.zeros((1,))
+                next_parameter_action = np.zeros((parameter_action_dim,))
             discrete_emb, parameter_emb, action, discrete_action, parameter_action = next_discrete_emb, next_parameter_emb, next_action, next_discrete_action, next_parameter_action
             state = next_state
             if cur_step >= args.start_timesteps:

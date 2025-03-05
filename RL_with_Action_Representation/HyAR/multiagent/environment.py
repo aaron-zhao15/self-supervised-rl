@@ -88,8 +88,8 @@ class PirateEnv(gym.Env):
             capturing = action[3]
             if moving:  # Move action
                 other_agents = [agent for j, agent in enumerate(self.agents) if j != i]
-                theta = action[1]
-                movement = np.array([np.cos(theta), np.sin(theta)])
+                # theta = action[1]
+                movement = action[1:3]
                 self.agents[i].move(movement, other_agents)
             
             if capturing and self.agent_capture_count[i] < self.capture_limit:

@@ -66,7 +66,7 @@ class QActor(nn.Module):
 
 class ParamActor(nn.Module):
 
-    def __init__(self, state_size, action_size, action_parameter_size, hidden_layers, squashing_function=False,
+    def __init__(self, state_size, action_size, action_parameter_size, hidden_layers, squashing_function=True,
                  output_layer_init_std=None, init_type="kaiming", activation="relu", init_std=None):
         super(ParamActor, self).__init__()
 
@@ -77,7 +77,7 @@ class ParamActor(nn.Module):
         self.activation = activation
         if init_type == "normal":
             assert init_std is not None and init_std > 0
-        assert self.squashing_function is False  # unsupported, cannot get scaling right yet
+        # assert self.squashing_function is False  # unsupported, cannot get scaling right yet
 
         # create layers
         self.layers = nn.ModuleList()
@@ -132,9 +132,7 @@ class ParamActor(nn.Module):
         action_params += self.action_parameters_passthrough_layer(state)
         # print("action_params",action_params)
         if self.squashing_function:
-            assert False  # scaling not implemented yet
             action_params = action_params.tanh()
-            action_params = action_params * self.action_param_lim
         # action_params = action_params / torch.norm(action_params) ## REMOVE --- normalisation layer?? for pointmass
         return action_params
 
@@ -181,7 +179,7 @@ class PDQNAgent(Agent):
         self.device = torch.device(device)
         self.num_actions = action_space
         # self.action_parameter_sizes = [4,0]
-        self.action_parameter_sizes = np.array([1, 0])
+        self.action_parameter_sizes = np.array([action_space, 0])
         self.action_parameter_size = int(self.action_parameter_sizes.sum())
 
         self.action_max = torch.from_numpy(np.ones((self.num_actions,))).float().to(device)
@@ -346,8 +344,8 @@ class PDQNAgent(Agent):
             offset = np.array([self.action_parameter_sizes[i] for i in range(action)], dtype=int).sum()
 
             if self.use_ornstein_noise and self.noise is not None:
-                all_action_parameters[0:1] += self.noise.sample()[0:1]
-            action_parameters = all_action_parameters[0:1]
+                all_action_parameters[0:self.num_actions] += self.noise.sample()[0:self.num_actions]
+            action_parameters = all_action_parameters[0:self.num_actions]
 
         return action, action_parameters, all_action_parameters
 
