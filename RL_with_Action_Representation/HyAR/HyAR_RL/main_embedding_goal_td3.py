@@ -3,6 +3,8 @@ import torch
 import gym
 import argparse
 import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from  HyAR_RL import utils
 from agents import P_TD3_relable
 from agents import P_DDPG_relable
@@ -107,10 +109,14 @@ def run(args):
         env = GoalFlattenedActionWrapper(env)
         env = ScaledParameterisedActionWrapper(env)
         env = ScaledStateWrapper(env)
+    elif args.env == "Pirate":
+        env = make_pirate_env()
+        env = ScaledParameterisedActionWrapper(env)
+        env = ScaledStateWrapper(env)
 
     reward_scale = 1. / 50.
     # Set seeds
-    env.seed(args.seed)
+    # env.seed(args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     state_dim = env.observation_space.spaces[0].shape[0]
@@ -542,12 +548,19 @@ def true_parameter_action(parameter_action, c_rate):
         parameter_action_[i] = parameter_action_[i] * median + offset
     return parameter_action_
 
+def make_pirate_env():
+    from multiagent.environment import PirateEnv
+
+    env = PirateEnv(num_agents=1)
+    return env
+
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--policy", default="P-TD3")  # Policy name (TD3, DDPG or OurDDPG)
-    parser.add_argument("--env", default='Goal-v0')  # platform goal HFO
+    # parser.add_argument("--env", default='Goal-v0')  # platform goal HFO
+    parser.add_argument("--env", default='Pirate')
     parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     parser.add_argument("--start_timesteps", default=128, type=int)  # Time steps initial random policy is used
     parser.add_argument("--eval_freq", default=500, type=int)  # How often (time steps) we evaluate

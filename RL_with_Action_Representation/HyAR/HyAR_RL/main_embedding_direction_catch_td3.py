@@ -47,7 +47,7 @@ def evaluate(env, policy, action_rep, c_rate, max_steps, episodes=100):
         flag = 0
         for j in range(max_steps):
             t += 1
-            state = np.array(state, dtype=np.float32, copy=False)[0]
+            state = np.array(state, dtype=np.float32)[0]
             discrete_emb, parameter_emb = policy.select_action(state)
             # parameter_emb = parameter_emb * c_rate
             true_parameter_emb = true_parameter_action(parameter_emb, c_rate)
@@ -214,7 +214,7 @@ def run(args):
     for i in range(5000):
 
         state = obs_n
-        state = np.array(state, dtype=np.float32, copy=False)[0]
+        state = np.array(state, dtype=np.float32)[0]
 
         act, act_param, all_action_parameters = agent_pre.act(state)
         action = pad_action(act, act_param)
@@ -227,7 +227,7 @@ def run(args):
             next_state, reward, done_n, _ = env.step(action)
             done = all(done_n)
             reward = reward[0]
-            next_state = np.array(next_state, dtype=np.float32, copy=False)[0]
+            next_state = np.array(next_state, dtype=np.float32)[0]
 
             next_act, next_act_param, next_all_action_parameters = agent_pre.act(next_state)
             next_action = pad_action(next_act, next_act_param)
@@ -318,7 +318,7 @@ def run(args):
     # for t in range(int(args.max_episodes)):
     while total_timesteps < args.max_timesteps:
         state = obs_n
-        state = np.array(state, dtype=np.float32, copy=False)[0]
+        state = np.array(state, dtype=np.float32)[0]
         discrete_emb, parameter_emb = policy.select_action(state)
         # 探索
         if t < args.epsilon_steps:
@@ -370,7 +370,7 @@ def run(args):
             if reward == 0:
                 done = True
 
-            next_state = np.array(next_state, dtype=np.float32, copy=False)[0]
+            next_state = np.array(next_state, dtype=np.float32)[0]
             cur_step = cur_step + 1
             state_next_state = next_state - state
             replay_buffer.add(state, discrete_action=discrete_action, parameter_action=parameter_action,
