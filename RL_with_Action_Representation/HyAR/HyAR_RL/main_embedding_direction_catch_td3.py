@@ -26,9 +26,9 @@ import math
 
 def pad_action(act, act_param):
     if act == 0:
-        action = np.hstack(([1], act_param[0], act_param[1], [0], [1]))
+        action = np.hstack(([0], act_param * np.pi))
     else:
-        action = np.hstack(([1], act_param[0], act_param[1], [1], [0]))
+        action = np.hstack(([1], act_param * np.pi))
 
     return [action]
 
@@ -113,10 +113,10 @@ def run(args):
 
     state_dim = obs_shape_n[0][0]
 
-    discrete_action_dim = 2
+    discrete_action_dim = 1
     # action_parameter_sizes = np.array(
     #     [env.action_space.spaces[i].shape[0] for i in range(1, discrete_action_dim + 1)])
-    parameter_action_dim = 2
+    parameter_action_dim = 1
     discrete_emb_dim = discrete_action_dim * 2
     parameter_emb_dim = (parameter_action_dim + 1) * discrete_action_dim
     max_action = 1.0
@@ -248,6 +248,11 @@ def run(args):
 
             episode_reward += reward
 
+            if reward > 4:
+                flag = 1
+                done = True
+            if reward == 0:
+                done = True
             if done or j == max_steps - 1:
                 obs_n = env.reset()
                 break

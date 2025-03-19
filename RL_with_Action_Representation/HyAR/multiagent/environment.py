@@ -12,9 +12,27 @@ import matplotlib.pyplot as plt
 import cv2
 import pickle
 
+import gym
+from gym import spaces
+from gym.envs.registration import EnvSpec
+import numpy as np
+import math
+
+import numpy as np
+import gym
+from gym import spaces
+import matplotlib.pyplot as plt
+import cv2
+import pickle
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import numpy as np
+import cv2
+
 class ContinuousMovableObject:
     def __init__(self, x, y, grid_size, speed=1, occupancy_radius=1):
-        self.position = np.array([x, y], dtype=float)
+        self.position = np.array([x, y])
         self.grid_size = grid_size
         self.occupancy_radius = occupancy_radius
         self.speed = speed
@@ -23,42 +41,50 @@ class ContinuousMovableObject:
         new_position = self.position + self.speed * np.array(movement)
         new_position = np.clip(new_position, 0, self.grid_size - 1)
         
-        for other_agent in other_agents:
-            distance = np.linalg.norm(new_position - other_agent.position)
-            if distance < self.occupancy_radius + other_agent.occupancy_radius:
-                return  # Collision detected, cancel the move
+        # for other_agent in other_agents:
+        #     distance = np.linalg.norm(new_position - other_agent.position)
+        #     if distance < self.occupancy_radius + other_agent.occupancy_radius:
+        #         return  # Collision detected, cancel the move
 
         self.position = new_position
 
 class PirateEnv(gym.Env):
-    def __init__(self, num_agents=3, grid_size=20, disable_distance=3, occupancy_radius=1):
+    def __init__(self, num_agents=3, grid_size=20, capture_distance=3, occupancy_radius=1, max_steps=1000):
         super(PirateEnv, self).__init__()
 
         self.num_agents = num_agents
         self.n = num_agents
         self.num_targets = num_agents
         self.grid_size = grid_size
-        self.disable_distance = disable_distance
-        self.max_steps = 100
+        self.capture_distance = capture_distance
+        self.max_steps = max_steps
         self.steps = 0
         self.occupancy_radius = occupancy_radius
         self.capture_limit = 10
 
         self.action_space = [spaces.Tuple((
             spaces.Discrete(2),  # Action type: 0 (move), 1 (capture)
-            spaces.Box(low=np.array([-1, -1]), high=np.array([1, 1]), dtype=np.float32)
+            spaces.Box(low=np.array([-1, -1]), high=np.array([1, 1]))
         )) for _ in range(self.num_agents)]
 
         self.observation_space = [spaces.Box(
             low=0,
             high=self.grid_size,
-            shape=(2 * self.num_agents + 3,),
-            dtype=np.float32
+            shape=(8,),
+        ) for _ in range(self.num_agents)]
+
+        self.goal_space = [spaces.Box(
+            low=0,
+            high=self.grid_size,
+            shape=(3,),
         ) for _ in range(self.num_agents)]
 
         self.reset()
 
-    def reset(self):
+    def reset(self, seed=None):
+        if seed:
+            np.random.seed(seed)
+
         self.agents = [ContinuousMovableObject(
             np.random.uniform(0, self.grid_size),
             np.random.uniform(0, self.grid_size),
@@ -73,51 +99,76 @@ class PirateEnv(gym.Env):
             self.grid_size
         ) for _ in range(self.num_targets)]
 
-        self.targets_disabled = [False] * self.num_targets
+        self.targets_disabled = [0] * self.num_targets
         self.agent_capture_count = [0] * self.num_agents
+        self.agent_capturing = [0] * self.num_agents
         self.steps = 0
 
-        return self.observations()
+        self.frames = []
+
+        return np.concat((self.observations(), self.goals()), axis=1)
 
     def step(self, actions):
         self.steps += 1
+        dones = np.zeros(self.num_agents)
         rewards = np.zeros(self.num_agents)
-        done = np.zeros(self.num_agents)
         for i, action in enumerate(actions):
-            moving = action[0]
-            capturing = action[3]
+            discrete_action, continuous_action = action[0], action[1]
+            moving = (discrete_action == 0)
+            capturing = (discrete_action == 1)
             if moving:  # Move action
                 other_agents = [agent for j, agent in enumerate(self.agents) if j != i]
-                # theta = action[1]
-                movement = action[1:3]
+                # movement = continuous_action
+                movement = [np.cos(continuous_action), np.sin(continuous_action)]
                 self.agents[i].move(movement, other_agents)
+            
+            self.agent_capturing[i] = capturing
             
             if capturing and self.agent_capture_count[i] < self.capture_limit:
                 target = self.targets[i]
                 distance = np.linalg.norm(self.agents[i].position - target.position)
-                if distance <= self.disable_distance and not self.targets_disabled[i]:
-                    rewards[i] = 10  # Capture reward
-                    self.targets_disabled[i] = True
-                    done[i] = True
-                else:
-                    rewards[i] = 0  # Failed capture penalty
+                if distance <= self.capture_distance and not self.targets_disabled[i]:
+                    self.targets_disabled[i] = 1
                 self.agent_capture_count[i] += 1
-
-            if self.agent_capture_count[i] >= self.capture_limit:
-                done[i] = True
-
+        
         for i, target in enumerate(self.targets):
             if not self.targets_disabled[i]:
                 target.move(np.random.uniform(-1, 1, size=2), self.agents)
 
-        move_rewards = self.dist_rewards()
-        rewards += move_rewards
+        obs, goals = self.observations(), self.goals()
+        rewards, dones = self.compute_reward(obs, goals)
+        for i in range(self.num_agents):
+            if self.agent_capture_count[i] >= self.capture_limit:
+                dones[i] = 1
 
         if self.steps >= self.max_steps:
-            done = np.ones_like(done)
-        observations = self.observations()
+            dones = np.ones_like(dones)
 
-        return observations, rewards, done.tolist(), {}
+        self.capture_frame()
+        states = np.concat((obs, goals), axis=1)
+        return states, rewards, dones, goals
+    
+    def compute_reward(self, state, goal):
+        agent_pos = state[:, 0:2]
+        capture_count = state[:, 2]
+        capture_threshold = state[:, 3]
+        agent_capturing = state[:, 4]
+
+        target_pos = goal[:, 0:2]
+        target_disabled = goal[:, 2]
+
+        agent_target_distance = np.linalg.norm(agent_pos - target_pos, axis=1)
+        rewards, dones = np.zeros_like(agent_target_distance), np.zeros_like(agent_target_distance)
+        for i in range(rewards.shape[0]):
+            if agent_target_distance[i] < capture_threshold and agent_capturing[i] and capture_count[i] < 1 and target_disabled[i] == 0:
+                rewards[i] += 10
+                dones[i] = 1
+            # elif agent_capturing[i]:
+            #     rewards[i] = -1
+            elif agent_target_distance[i] > capture_threshold:
+                rewards[i] += -agent_target_distance[i]/self.grid_size
+        return rewards, dones
+
 
     def dist_rewards(self):
         return np.array([-np.linalg.norm(agent.position - target.position) for agent, target in zip(self.agents, self.targets)])
@@ -126,12 +177,18 @@ class PirateEnv(gym.Env):
         obs = [[] for _ in self.agents]
         for agent_id, agent in enumerate(self.agents):
             obs[agent_id].extend(agent.position)
-            for other_agent_id, other_agent in enumerate(self.agents):
-                if agent_id != other_agent_id:
-                    obs[agent_id].extend(other_agent.position)
-            obs[agent_id].extend(self.targets[agent_id].position)
-            obs[agent_id].extend([self.targets_disabled[agent_id]])
+            obs[agent_id].append(self.agent_capture_count[agent_id]/self.capture_limit)
+            obs[agent_id].append(self.capture_distance)
+            obs[agent_id].append(self.agent_capturing[agent_id])
+
         return np.array(obs)
+    
+    def goals(self):
+        goals = [[] for _ in self.agents]
+        for agent_id, agent in enumerate(self.agents):
+            goals[agent_id].extend(self.targets[agent_id].position)
+            goals[agent_id].append(self.targets_disabled[agent_id])
+        return np.array(goals)
     
     def render(self, mode='human'):
         canvas_size = 500
@@ -151,8 +208,8 @@ class PirateEnv(gym.Env):
 
         # Draw agents with continuous positions
         for i, agent in enumerate(self.agents):
-            color = (0, 255, 0) if self.agent_launched[i] else (255, 0, 0)
-            # Scale continuous positions for rendering
+            green_intensity = max(0, 144 - int((self.agent_capture_count[i] / 10) * 144))
+            color = (0, green_intensity, 0)
             agent_pos = np.clip(agent.position, 0, self.grid_size - 1) * scale
             center = tuple(agent_pos.astype(int))
             cv2.circle(canvas, center, int(scale // 3), color, -1)
@@ -196,6 +253,39 @@ class PirateEnv(gym.Env):
         self.agent_launched = state['agent_launched']
         self.steps = state['steps']
 
+    def capture_frame(self):
+        """ Store the current environment state as an image for playback. """
+        frame = self.render()  # Get the current frame from render()
+        self.frames.append(frame)
+
+    def show_video(self, title="Environment Rollout", fps=10):
+        """ Play an animation of the captured trajectory using OpenCV. """
+        if not self.frames:
+            print("No frames to show!")
+            return
+        
+        for frame in self.frames:
+            cv2.imshow(title, frame)  
+            if cv2.waitKey(int(1000 / fps)) & 0xFF == ord('q'):  # Press 'q' to quit
+                break
+
+        cv2.destroyAllWindows()
+
+    def generate_video(self, filename="pirate_rollout.mp4", fps=10):
+        """ Save the captured rollout as an MP4 video using OpenCV. """
+        if not self.frames:
+            print("No frames to save!")
+            return
+
+        height, width, _ = self.frames[0].shape
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for MP4
+        out = cv2.VideoWriter(filename, fourcc, fps, (width, height))
+
+        for frame in self.frames:
+            out.write(frame)  # Write frame to video
+
+        out.release()
+        print(f"Video saved as {filename}")
 
     def close(self):
         cv2.destroyAllWindows()
@@ -206,41 +296,27 @@ def run_environment(env, num_steps=20):
         env.step(actions)
         env.render()
 
-def policy_to_action(policies):
-    env_actions = []
-    for policy in policies:
-        action_type = np.argmax(policy[0:2])
-        movement = np.array(policy[2:4])
-        action = [action_type, movement]
-        env_actions.append(action)
-    return env_actions
-
 from matplotlib.animation import FuncAnimation
-def run_and_visualize(env, agents, num_steps=50, eval_mode="debug", policy_converter=lambda x:x):
+def run_and_visualize(env, agents):
     frames = []
 
     # Initialize state and pre-allocate frame storage if possible
-    state = env.reset()
+    state = env.reset(seed=1)
 
     # Step through the environment and collect frames
-    for _ in range(num_steps):
+    for _ in range(env.max_steps):
         # Optimize action computation
-        if eval_mode == "hybrid":
-            actions = []
-            for i, (move_agent, decision_agent) in enumerate(agents):
-                move_action = move_agent.act(state[i])
-                decision_action = decision_agent.act(state[i])
-                
-                action = np.concatenate((decision_action, move_action))
-                actions.append(action)
-            actions = policy_converter(actions)
+        actions = []
+        for i, agent in enumerate(agents):
+            action, _ = agent.act(state[i])
+            actions.append(action)
         
         state, rewards, done, _ = env.step(actions)
 
         # Collect frame only if rendering is enabled
         frame = env.render()
         frames.append(frame)
-        if done:
+        if done.all():
             break
 
     # Create a video and visualize it in the Jupyter notebook cell
@@ -255,6 +331,10 @@ def run_and_visualize(env, agents, num_steps=50, eval_mode="debug", policy_conve
     # Use FuncAnimation to create an animation with a lower interval
     anim = FuncAnimation(fig, update_frame, frames=len(frames), interval=100, repeat=False)
     plt.close(fig)  # Prevent duplicate static display of the plot
+
+    # Display the animation in the notebook
+    from IPython.display import HTML
+    return HTML(anim.to_jshtml())
 
 
 
